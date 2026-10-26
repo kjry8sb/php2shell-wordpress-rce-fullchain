@@ -1,0 +1,83 @@
+services:
+  # OOMBA lab - four targets on vulnerable PHP images, all ASLR ON.
+  # (Roundcube retired; findings in ANALYSIS.md 5.2.)
+  #
+  # The exploit requests for the WordPress targets should use the plain
+  # /oomba_test.php entry (planted by the setup service) - the WP
+  # bootstrap pages perturb the request-B heap, plain entries do not.
+  #
+  # Bring up:   docker compose up -d
+  # Webroots:   ./webroots/{wp713,wp712,wp743} - created by docker_lab.sh
+  #             (docker create + docker cp from the wordpress images) or
+  #             by hand; plain webroot for the 8088 target is created by
+  #             the setup service.
+  # Proof out:  ../out (bind-mounted to /out in every target)
+
+  plain:
+    image: php:8.4.26-apache
+    container_name: oomba-plain
+    ports:
+      - "127.0.0.1:8088:80"
+    volumes:
+      - ./webroots/plain:/var/www/html
+      - ./files/php.ini:/usr/local/etc/php/conf.d/zz-oomba.ini:ro
+      - ./files/single.conf:/etc/apache2/conf-enabled/zz-single.conf:ro
+      - ../out:/out
+
+  wp713:
+    image: php:8.4.26-apache
+    container_name: oomba-wp8
+    ports:
+      - "127.0.0.1:8091:80"
+    volumes:
+      - ./webroots/wp713:/var/www/html
+      - ./files/php.ini:/usr/local/etc/php/conf.d/zz-oomba.ini:ro
+      - ./files/single.conf:/etc/apache2/conf-enabled/zz-single.conf:ro
+      - ../out:/out
+    entrypoint: ["sh", "-c", "a2enmod rewrite >/dev/null && apache2-foreground"]
+
+  wp712:
+    image: php:8.4.26-apache
+    container_name: oomba-wp712
+    ports:
+      - "127.0.0.1:8092:80"
+      - "127.0.0.1:4501:4501"       # bind-shell port (oomba --interactive-bind)
+    security_opt:
+      - seccomp=unconfined
+    volumes:
+      - ./webroots/wp712:/var/www/html
+      - ./files/php.ini:/usr/local/etc/php/conf.d/zz-oomba.ini:ro
+      - ./files/single.conf:/etc/apache2/conf-enabled/zz-single.conf:ro
+      - ../out:/out
+    entrypoint: ["sh", "-c", "a2enmod rewrite >/dev/null && apache2-foreground"]
+
+  wp743:
+    image: php:7.4.33-apache
+    container_name: oomba-wp743
+    ports:
+      - "127.0.0.1:8094:80"
+    security_opt:
+      - seccomp=unconfined
+    volumes:
+      - ./webroots/wp743:/var/www/html
+      - ./files/wp743-php.ini:/usr/local/etc/php/conf.d/zz-oomba.ini:ro
+      - ./files/single.conf:/etc/apache2/conf-enabled/zz-single.conf:ro
+      - ../out:/out
+    entrypoint: ["sh", "-c", "a2enmod rewrite >/dev/null && apache2-foreground"]
+
+  # one-shot helper: creates the plain webroot + plants /oomba_test.php in
+  # every webroot (the deterministic exploit entrypoint) and ../out
+  setup:
+    image: php:8.4.26-apache
+    container_name: oomba-setup
+    restart: "no"
+    entrypoint: >
+      sh -c 'mkdir -p /w/plain /out
+      && printf "%s\n" "<?php echo \"OK\\n\"; ?>" > /w/plain/index.php
+      && for w in /w/wp713 /w/wp712 /w/wp743; do
+           [ -d "$w" ] && printf "%s\n" "<?php echo \"OK\\n\"; ?>" > "$w/oomba_test.php";
+         done
+      && echo setup-done'
+    volumes:
+      - ./webroots:/w
+      - ../out:/out
